@@ -46,9 +46,7 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 
-import static io.questdb.cairo.TableUtils.createTable;
 import static io.questdb.test.tools.TestUtils.*;
-import static io.questdb.test.tools.TestUtils.assertSql;
 
 public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
@@ -115,7 +113,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         MemoryMARW mem = Vm.getMARWInstance();
                         Path path = new Path().of(OTHER_VOLUME).concat(tableName).$()
                 ) {
-                    createTable(cairoConfig, mem, path, true, tableModel, 1);
+                    qdb.getCairoEngine().createTable(AllowAllCairoSecurityContext.INSTANCE, mem, path, false, tableModel, false);
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
                 }
                 StringSink sink = Misc.getThreadLocalBuilder();
@@ -125,7 +123,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         sink,
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, "ts1\tpatrons_table\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", sink, "ts1\tpatrons_table\tts\tDAY\t500000\t600000000\tfalse\tpatrons_table\n");
             }
         });
     }
@@ -158,7 +156,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         MemoryMARW mem = Vm.getMARWInstance();
                         Path path = new Path().of(cairoConfig.getRoot()).concat(tableName)
                 ) {
-                    createTable(cairoConfig, mem, path, tableModel, 1);
+                    qdb.getCairoEngine().createTable(AllowAllCairoSecurityContext.INSTANCE, mem, path, false, tableModel, false);
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
                 }
                 StringSink sink = Misc.getThreadLocalBuilder();
@@ -222,7 +220,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private static void deleteFolder(String folderName) throws IOException {
         java.nio.file.Path directory = Paths.get(folderName);
-        java.nio.file.Files.walkFileTree(directory, new SimpleFileVisitor<java.nio.file.Path>() {
+        java.nio.file.Files.walkFileTree(directory, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult postVisitDirectory(java.nio.file.Path dir, IOException exc) throws IOException {
                 java.nio.file.Files.delete(dir);

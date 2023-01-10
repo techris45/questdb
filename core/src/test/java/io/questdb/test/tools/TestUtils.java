@@ -264,12 +264,12 @@ public final class TestUtils {
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            int fda = Files.openRO(path);
+            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
                 path.of(b.getAbsolutePath()).$();
-                int fdb = Files.openRO(path);
+                int fdb = TestFilesFacadeImpl.INSTANCE.openRO(path);
                 Assert.assertNotEquals(-1, fdb);
                 try {
 
@@ -301,10 +301,10 @@ public final class TestUtils {
                         Unsafe.free(bufb, 4096, MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Files.close(fdb);
+                    TestFilesFacadeImpl.INSTANCE.close(fdb);
                 }
             } finally {
-                Files.close(fda);
+                TestFilesFacadeImpl.INSTANCE.close(fda);
             }
         }
     }
@@ -312,7 +312,7 @@ public final class TestUtils {
     public static void assertEquals(File a, CharSequence actual) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            int fda = Files.openRO(path);
+            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
@@ -353,7 +353,7 @@ public final class TestUtils {
                     Unsafe.free(str, actual.length(), MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
-                Files.close(fda);
+                TestFilesFacadeImpl.INSTANCE.close(fda);
             }
         }
     }
@@ -506,7 +506,8 @@ public final class TestUtils {
     public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
 
         engine.releaseAllReaders();
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        TableToken tt = engine.getTableToken(tableName);
+        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tt)) {
             TableReaderMetadata metadata = rdr.getMetadata();
             int symIndex = metadata.getColumnIndex(columnName);
 
@@ -709,7 +710,7 @@ public final class TestUtils {
         if (Files.mkdirs(dst, dirMode) != 0) {
             Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
         }
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         Assert.assertEquals(0, ff.copyRecursive(src, dst, dirMode));
     }
 
@@ -728,7 +729,7 @@ public final class TestUtils {
         }
     }
 
-    public static void createPopulateTable(
+    public static TableToken createPopulateTable(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             TableModel tableModel,
@@ -736,7 +737,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        createPopulateTable(
+        return createPopulateTable(
                 tableModel.getTableName(),
                 compiler,
                 sqlExecutionContext,
@@ -747,7 +748,7 @@ public final class TestUtils {
         );
     }
 
-    public static void createPopulateTable(
+    public static TableToken createPopulateTable(
             CharSequence tableName,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -766,6 +767,7 @@ public final class TestUtils {
                 ),
                 sqlExecutionContext
         );
+        return sqlExecutionContext.getTableToken(tableName);
     }
 
     public static String createPopulateTableStmt(
@@ -887,7 +889,7 @@ public final class TestUtils {
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration, metrics, 2);
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
@@ -1188,7 +1190,7 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         final Path path = Path.getThreadLocal(root);
-        final int rc = Files.rmdir(path.slash$());
+        final int rc = TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$());
         MatcherAssert.assertThat("Test dir cleanup error, rc=" + rc, rc, is(lessThanOrEqualTo(0)));
     }
 

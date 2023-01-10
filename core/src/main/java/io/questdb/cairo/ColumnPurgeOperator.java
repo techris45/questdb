@@ -145,7 +145,7 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .utf8(task.getTableName())
+                    .$(task.getTableName())
                     .$(", txn=").$(updateTxn)
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno()).I$();
@@ -188,7 +188,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
 
-        LOG.info().$("purging [table=").utf8(task.getTableName())
+        LOG.info().$("purging [table=").$(task.getTableName())
                 .$(", column=").utf8(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
                 .I$();
@@ -333,7 +333,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private void reopenPurgeLogPartition(int partitionIndex, long partitionTimestamp) {
         path.trimTo(pathRootLen);
-        path.concat(purgeLogWriter.getTableName());
+        path.concat(purgeLogWriter.getTableToken());
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
         TableUtils.setPathForPartition(
                 path,
@@ -388,7 +388,7 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private void setTablePath(String tableName) {
+    private void setTablePath(TableToken tableName) {
         path.trimTo(pathRootLen).concat(tableName);
         pathTableLen = path.length();
     }

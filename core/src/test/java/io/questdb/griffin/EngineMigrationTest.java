@@ -35,6 +35,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -69,6 +70,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 }
             }
         }
+    }
+
+    @BeforeClass
+    public static void setUpStatic() {
+        configOverrideMangleTableDirNames(false);
+        AbstractGriffinTest.setUpStatic();
     }
 
     @Test
@@ -1263,6 +1270,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
+        engine.reloadTableNames();
         assertData(withO3, withColTops, withColTopO3);
         appendData(withColTopO3);
         assertAppendedData(withColTopO3);
@@ -1374,7 +1382,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         compiler.compile("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "o3_0", "test")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("o3_0"), "test")) {
             TableWriter.Row r;
 
             // insert day 1
@@ -1506,7 +1514,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
 
         TestUtils.copyDirectory(from.$(), to.$(), configuration.getMkDirMode());
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // Remove first partition
         to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);

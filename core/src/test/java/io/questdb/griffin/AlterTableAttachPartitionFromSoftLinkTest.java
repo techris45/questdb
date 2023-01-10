@@ -25,11 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
@@ -202,12 +207,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "FINLAND", () -> {
                         try {
-                            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                            try (TableReader rdr = getReader(tableName)) {
                                 // drop the partition which was attached via soft link
                                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                                 // there is a reader, cannot unlink, thus the link will still exist
                                 path.of(configuration.getRoot()) // <-- soft link path
-                                        .concat(tableName)
+                                        .concat(rdr.getTableToken())
                                         .concat(readOnlyPartitionName)
                                         .put(".2")
                                         .$();
@@ -250,7 +255,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
                             );
 
-                            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                            try (TableReader ignore = getReader(tableName)) {
                                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
                             }
 
@@ -305,7 +310,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "5005\t5005\tPEHN\t2022-10-18T00:01:25.899500Z\n"
                             );
 
-                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "write-rows")) {
+                            try (TableWriter writer = getWriter(engine, tableName)) {
                                 TableWriter.Row row = writer.newRow(activePartitionTimestamp);
                                 row.putLong(0, 2023);
                                 row.putInt(1, 12);
@@ -384,7 +389,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             }
 
             // make all partitions, but last, read-only
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
+            try (TableWriter writer = getWriter(engine, tableName)) {
                 TxWriter txWriter = writer.getTxWriter();
                 int partitionCount = txWriter.getPartitionCount();
                 Assert.assertEquals(5, partitionCount);
@@ -402,7 +407,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             }
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 TxReader txFile = reader.getTxFile();
                 int partitionCount = txFile.getPartitionCount();
                 Assert.assertEquals(5, partitionCount);
@@ -475,7 +480,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             // the previously partition, read-only, becomes now the active partition, and cannot be written to
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 TxReader txFile = reader.getTxFile();
                 for (int i = 0; i < 4; i++) {
                     Assert.assertTrue(txFile.isPartitionReadOnly(i));
@@ -634,12 +639,13 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
 
             // detach all partitions but last two and them from soft link
-            path.of(configuration.getRoot()).concat(tableName);
+            TableToken tableToken = engine.getTableToken(tableName);
+            path.of(configuration.getRoot()).concat(tableToken);
             int pathLen = path.length();
             for (int i = 0; i < partitionCount - 2; i++) {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
                 txn++;
-                copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName[i], otherLocation);
+                copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, partitionName[i], otherLocation);
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
                 txn++;
 
@@ -650,7 +656,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             }
 
             // verify read-only flag
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 TxReader txFile = reader.getTxFile();
                 for (int i = 0; i < partitionCount - 2; i++) {
                     Assert.assertTrue(txFile.isPartitionReadOnly(i));
@@ -665,7 +671,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
 
             // create a reader, which will prevent partitions from being immediately purged
-            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader ignore = getReader(tableName)) {
                 // drop all partitions but the most recent
                 for (int i = 0, expectedTxn = 2; i < partitionCount - 2; i++, expectedTxn += 2) {
                     compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
@@ -685,7 +691,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             runO3PartitionPurgeJob();
 
             // verify cold storage still exists
-            other.of(new File(temp.getRoot(), otherLocation).getAbsolutePath()).concat(tableName);
+            other.of(new File(temp.getRoot(), otherLocation).getAbsolutePath()).concat(tableToken);
             int otherLen = other.length();
             AtomicInteger fileCount = new AtomicInteger();
             for (int i = 0; i < partitionCount - 2; i++) {
@@ -741,7 +747,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         engine.releaseAllWriters();
                         try (
                                 ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine, null);
-                                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
+                                TableReader reader = getReader(tableName)
                         ) {
                             TxReader txReader = reader.getTxFile();
                             Assert.assertTrue(txReader.unsafeLoadAll());
@@ -977,17 +983,18 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             // detach partition and attach it from soft link
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, readOnlyPartitionName, otherLocation);
+            TableToken tableToken = engine.getTableToken(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, otherLocation);
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
 
             // verify that the link has been renamed to what we expect
-            path.of(configuration.getRoot()).concat(tableName).concat(readOnlyPartitionName);
+            path.of(configuration.getRoot()).concat(tableToken).concat(readOnlyPartitionName);
             TableUtils.txnPartitionConditionally(path, 2);
             Assert.assertTrue(Files.exists(path.$()));
 
             // verify RO flag
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 TxReader txFile = reader.getTxFile();
                 Assert.assertNotNull(txFile);
                 Assert.assertTrue(txFile.isPartitionReadOnly(0));
@@ -1001,7 +1008,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     private void copyToDifferentLocationAndMakeAttachableViaSoftLink(
-            String tableName,
+            TableToken tableName,
             CharSequence partitionName,
             String otherLocation
     ) {
@@ -1060,7 +1067,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             createTable(tableName);
             // the read-only flag is only set when a partition is attached from soft link
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
+            try (TableWriter writer = getWriter(tableName)) {
                 TxWriter txWriter = writer.getTxWriter();
                 txWriter.setPartitionReadOnlyByTimestamp(readOnlyPartitionTimestamp, true);
                 txWriter.bumpTruncateVersion();
@@ -1068,7 +1075,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             }
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 TxReader txFile = reader.getTxFile();
                 Assert.assertTrue(txFile.isPartitionReadOnlyByPartitionTimestamp(readOnlyPartitionTimestamp));
                 Assert.assertTrue(txFile.isPartitionReadOnly(0));

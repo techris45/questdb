@@ -29,8 +29,6 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.griffin.SqlCompiler;
@@ -38,13 +36,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.TableUtils.createTable;
 import static io.questdb.test.tools.TestUtils.*;
 
 public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
@@ -185,16 +180,15 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                 .col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).symbolCapacity(32)
-                                .timestamp("ts");
-                        MemoryMARW mem = Vm.getMARWInstance();
-                        Path path = new Path().of(cairoConfig.getRoot()).concat(tableName)
+                                .timestamp("ts")
                 ) {
-                    createTable(cairoConfig, mem, path, tableModel, 1);
+                    CairoTestUtils.create(engine, tableModel);
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
                 }
+                TableToken tableToken = engine.getTableToken(tableName);
 
                 // set partition read-only state
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-state")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-state")) {
                     TxWriter txWriter = writer.getTxWriter();
                     int partitionCount = txWriter.getPartitionCount();
                     Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
@@ -218,8 +212,8 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 // so that we know when the table writer is returned to the pool
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equalsNc(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
+                    if (name == tableToken) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                             tableWriterReturnedToPool.countDown();
                         }
                     }
