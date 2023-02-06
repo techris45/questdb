@@ -49,8 +49,8 @@ import static io.questdb.std.Chars.utf8ToUtf16;
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private final long commitInterval;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final long defaultCommitInterval;
     private final long defaultMaxUncommittedRows;
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
@@ -87,20 +87,17 @@ public class TableUpdateDetails implements Closeable {
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
-        this.defaultCommitInterval = configuration.getCommitIntervalDefault();
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
         this.writerAPI = writer;
         TableRecordMetadata tableMetadata = writer.getMetadata();
         this.timestampIndex = tableMetadata.getTimestampIndex();
         this.tableToken = writer.getTableToken();
-        if (writer.supportsMultipleWriters()) {
-            metadataService = null;
-            this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
-        } else {
-            metadataService = (MetadataService) writer;
-            metadataService.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
-            this.nextCommitTime = millisecondClock.getTicks() + metadataService.getCommitInterval();
-        }
+        this.commitInterval = calculateCommitInterval(
+                configuration.getCommitIntervalFraction(),
+                configuration.getCommitIntervalDefault(),
+                cairoConfiguration.getO3MinLag()
+        );
+        this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
@@ -258,11 +255,9 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private long getCommitInterval() {
-        if (metadataService != null) {
-            return metadataService.getCommitInterval();
-        }
-        return defaultCommitInterval;
+    private static long calculateCommitInterval(double commitIntervalFraction, long commitIntervalDefault, long o3MinLag) {
+        long commitIntervalMicros = (long) (o3MinLag * commitIntervalFraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
     }
 
     private long getMetaMaxUncommittedRows() {
@@ -277,7 +272,6 @@ public class TableUpdateDetails implements Closeable {
             return nextCommitTime;
         }
         if (writerAPI != null) {
-            final long commitInterval = getCommitInterval();
             long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
             // Do not commit row by row if the commit takes longer than commitInterval.
@@ -297,7 +291,7 @@ public class TableUpdateDetails implements Closeable {
             return;
         }
         LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableToken).I$();
-        nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
+        nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
         try {
             commit(true);

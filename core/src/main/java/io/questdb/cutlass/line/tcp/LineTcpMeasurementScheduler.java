@@ -195,33 +195,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    public long commitWalTables(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8, long wallClockMillis) {
-        long minTableNextCommitTime = Long.MAX_VALUE;
-        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
-            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-
-            if (tud.isWal()) {
-                final MillisecondClock millisecondClock = tud.getMillisecondClock();
-                try {
-                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
-                    // get current time again, commit is not instant and take quite some time.
-                    wallClockMillis = millisecondClock.getTicks();
-                    if (tableNextCommitTime < minTableNextCommitTime) {
-                        // taking the earliest commit time
-                        minTableNextCommitTime = tableNextCommitTime;
-                    }
-                } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
-                    engine.getMetrics().health().incrementUnhandledErrors();
-                }
-            }
-        }
-        // if no tables, just use the default commit interval
-        long commitIntervalDefault = configuration.getCommitIntervalDefault();
-        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
-    }
-
     public boolean doMaintenance(
             ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
@@ -300,14 +273,34 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     public void releaseWalTableDetails(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8) {
+        long wallClockMillis = configuration.getMillisecondClock().getTicks();
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
+        CharSequence lastCommitErrorTable = null;
+        CommitFailedException lastCommitError = null;
         for (int n = keys.size() - 1; n > -1; --n) {
             final ByteCharSequence tableNameUtf8 = keys.getQuick(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (tud.isWal()) {
+                try {
+                    tud.commitIfIntervalElapsed(wallClockMillis);
+                } catch (CommitFailedException ex) {
+                    tud.setWriterInError();
+                    LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
+                            .$(",ex=")
+                            .$(ex)
+                            .I$();
+                    lastCommitErrorTable = tud.getTableNameUtf16();
+                    lastCommitError = ex;
+                    continue;
+                }
+
                 tableUpdateDetailsUtf8.remove(tableNameUtf8);
                 walIdleUpdateDetailsUtf8.put(tableNameUtf8, tud);
             }
+        }
+
+        if (lastCommitError != null) {
+            throw CairoException.critical(0).put("could not append to WAL [tableName=").put(lastCommitErrorTable).put(", error=").put(lastCommitError.getMessage()).put(']');
         }
     }
 
