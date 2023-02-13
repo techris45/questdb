@@ -129,6 +129,7 @@ class LineTcpWriterJob implements Job, Closeable {
             // if no tables, just use the default commit interval
             nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
         }
+        scheduler.commitWalTables();
     }
 
     private boolean drainQueue() {

@@ -195,6 +195,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
+    public void commitWalTables() {
+        long wallClockMils =
+
+                walIdleUpdateDetailsUtf8.commitIfIntervalElapesed();
+    }
+
     public boolean doMaintenance(
             ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
